@@ -5,7 +5,7 @@
 	<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
 	<meta name="viewport" content="width=1024, user-scalable=no">
 
-	<title>Your deck.js Presentation</title>
+	<title>Kafka, Storm, node.js and D3</title>
 	
 	<!-- Required stylesheet -->
 	<link rel="stylesheet" href="core/deck.core.css">
@@ -13,59 +13,498 @@
 	<!-- Extension CSS files go here. Remove or add as needed. -->
 	<link rel="stylesheet" href="extensions/goto/deck.goto.css">
 	<link rel="stylesheet" href="extensions/menu/deck.menu.css">
-	<link rel="stylesheet" href="extensions/navigation/deck.navigation.css">
+<!--	<link rel="stylesheet" href="extensions/navigation/deck.navigation.css"> -->
 	<link rel="stylesheet" href="extensions/status/deck.status.css">
 	<link rel="stylesheet" href="extensions/hash/deck.hash.css">
 	<link rel="stylesheet" href="extensions/scale/deck.scale.css">
 
 	<!-- Style theme. More available in /themes/style/ or create your own. -->
-	<link rel="stylesheet" href="themes/style/web-2.0.css">
+	<link rel="stylesheet" href="themes/style/swiss.css">
 	
 	<!-- Transition theme. More available in /themes/transition/ or create your own. -->
-	<link rel="stylesheet" href="themes/transition/horizontal-slide.css">
+	<link rel="stylesheet" href="themes/transition/fade.css">
+
+        <link rel="stylesheet" href="prettify.css">
 	
 	<!-- Required Modernizr file -->
 	<script src="modernizr.custom.js"></script>
+        <script src="prettify.js"></script>
 </head>
 <body class="deck-container">
 
 <!-- Begin slides. Just make elements with a class of slide. -->
+<section class="slide" id="intro">
+<div>
+  <hgroup><h1>Kafka, Storm+Redis, Node and D3</h1><h2>LivePerson</h2></hgroup>
+</div>
+</section>
 
+
+<section class="slide" id="intro">
+<h2>The Stack</h2>
+<ul>
+  <li><strong>Kafka</strong>. Data Motion.
+  <ul>
+    <li>Developed at LinkedIn to manage communication between services, replacing ActiveMQ</li>
+    <li>Simple producer/consumer model</li>
+  </ul></li>
+  <li><strong>Storm + Redis</strong>. Streaming Data Processing.
+  <ul>
+    <li>Developed by Backtype, acquired by Twitter.</li>
+    <li>Manages distributed computation.</li>
+  </ul></li>
+  <li><strong>node.js</strong>. Server-side Javascript.
+  <ul>
+    <li>The V8 engine that powers Chrome</li>
+    <li>Event-driven for high connection concurrency</li>
+  </ul></li>
+  <li><strong>D3</strong>. Data Driven Documents.
+  <ul>
+    <li>Manipulate document object models with data.</li>
+    <li>Focus on visualization</li>
+    <li>Many useful plugins</li>
+  </ul></li>
+</ul>
+</section>
 <section class="slide">
-	<h1>LivePerson Introduction</h1>
+<h2>Getting Started With Kafka</h2>
+<ul>
+  <li><strong>Producers</strong> are application that produces messages on a <strong>topic</strong><ul>
+    <li>The current producer protocol is very simple with libraries for many languages</li>
+    <li>Kafka 0.8 introduces a more sophisticated producer protocol for applications that have strong delivery requiments</li>
+    <li>Snappy and GZIP compression is supported.</li>
+  </ul></li>
+  <li><strong>Topics</strong> are a collection of related messages.<ul>
+    <li>Topics are created on the fly by producers, no configuration required</li>
+    <li>Most organizations use a relatively small number of topics (< 100).</li>
+  </ul></li>
+  <li><strong>Brokers</strong> hold the data. Messages for each topic are split across each broker in a <strong>cluster</strong>.<ul>
+    <li>Messages are split evenly across each broker</li>
+    <li>Broker clusters can be mirrored and/or combined to manage multiple datacenter transfers.</li>
+    <li>Data is kept for a certain amount of <strong>time</strong> not space. Making sure there is enough disk space is an important part of Kafka maintenance</li>
+  </ul></li>
+  <li><strong>Consumers</strong> read data from the brokers.<ul>
+    <li>Because the reads are distributed, the read order will be different than the write ordering.</li>
+    <li>Uses an at-least-once semantic. You need to handle deduplication in your application logic</li>
+  </ul></li>
+</ul>
+</section>
+<section class="slide" id="kafka">
+  <h2>Simple Producer</h2>
+<pre class="prettyprint lang-js">
+var X     = require('node-xml')
+,   kafka = require('kafka');
+
+var producer = new kafka.Producer({topic:'hamlet'}).connect(function() {
+    function send(i,line) {
+	setTimeout(function() { 
+	    line.TIMESTAMP = (new Date().getTime());
+	    producer.send(JSON.stringify(line));
+	},1000*i + Math.floor(300*Math.random()));
+    }
+    
+    var parser = new X.SaxParser(function(c) { 
+	var i    = 0;
+	var line = {};
+	var field = [];
+	c.onStartElementNS(function(e) {
+	    field.push(e);
+	    switch(e) {
+	    case 'SPEECH':
+		line = {};
+		break;
+	    }
+	});
+	c.onEndElementNS(function(e) {
+	    field.pop();
+	    switch(e) {
+	    case 'SPEECH':
+		delete line['SPEECH'];
+		delete line['SCENE'];
+		send(i++,line);
+		break;
+	    }
+	});
+	c.onCharacters(function(e) {
+	    line[field[field.length-1]] = (line[field[field.length-1]]||"") + e;
+	});
+    });
+    parser.parseFile("hamlet.xml");
+});
+</pre>
+</section>
+  
+<section class="slide">
+  <h2>Simple Consumer</h2>
+  <pre class="prettyprint">
+  var http    = require('http')
+,   connect = require('connect')
+,   kafka   = require('kafka');
+
+function consumer(req,res) {
+
+	console.log("Subscribing to topic");
+	req.socket.setTimeout(Infinity);
+	res.writeHead(200,{
+	    'Content-Type':'text/event-stream',
+	    'Cache-Control':'no-cache',
+	    'Connection':'keepalive'
+	});
+	res.message = function(msg,event) {
+	    if(event)
+		res.write('event: '+event+'\n');
+	    res.write('data: '+msg+'\n\n');
+	}
+	res.json = function(obj,event) {
+	    this.message(JSON.stringify(obj),event);
+	};
+
+    var consumer = new kafka.Consumer()
+	.on('message',function(topic,message,offset) {
+	    res.message(message);
+	})
+	.on('lastmessage',function(topic,offset) {
+	    consumer.fetchTopic({name:topic,offset:offset});
+	})
+	.on('lastoffset',function(topic,offset) {
+	    consumer.fetchTopic({name:topic,offset:offset});
+	})
+	.connect(function() {
+	    console.log("connected");
+	    consumer.fetchOffsets('hamlet');
+	});
+}</pre>
 </section>
 
 <section class="slide">
-	<h1>ZoomData Introduction</h1>
+<h2>Simple Front-End</h2>
+<pre class="prettyprint">
+$(function() {
+    var stream = new EventSource("/consumer");
+    stream.addEventListener("message",function(e) {
+	var data = e.data;
+	try{ 
+	    data = JSON.parse(data);
+	    if(data.SPEAKER && data.LINE) {
+		$('#timestamp').html(""+(new Date(data.TIMESTAMP)));
+		$('#speaker').html(data.SPEAKER);
+		$('#line').html(data.LINE);
+	    }
+	} catch(e) { console.log(e); }
+    });
+});
+</pre>
 </section>
 
 <section class="slide">
-	<h1>Infrastructure Outline (Kafka + Storm)</h1>
+  <h2>Kafka Producer Output</h2>
+  <h3><strong>Time:</strong> <span id="timestamp"></span></h3>
+  <h3><strong>Speaker:</strong> <span id="speaker"></span></h3>
+  <h3><strong>Line:</strong> <span id="line"></span></h3>
 </section>
 
 <section class="slide">
-	<h1>Kafka + History Streaming from MongoDB?</h1>
+<h1>Doing Things With Data: Storm</h1>
+</section>
+  
+<section class="slide" id="storm">
+<h2>Storm</h2>
+<ul>
+  <li>A platform for managing a collection of processing steps for streaming data.<ul>
+    <li>Inputs are called <strong>Spouts</strong></li>
+    <li>Processors are called <strong>Bolts</strong></li>
+    <li>Data is transferred between <strong>spouts</strong> and <strong>bolts</strong> using <strong>tuples</strong>.</li>
+    <li>A group of <strong>spouts</strong> and <strong>bolts</strong> are called a <strong>topology</strong>.
+  </ul></li>
+  <li>Let's make a topology<ol>
+    <li>Read data from Kafka using a <strong>Kafka Spout</strong></li>
+    <li>Parse the input JSON into a structured <strong>tuple</strong></li>
+    <li>Count the frequency of each word used</li>
+    <li>Track the activity of different speakers</li>
+    <li>Store this data in Redis so we can render it on our front-end</li>
+  </ol></li>
+</ul>
 </section>
 
 <section class="slide">
-	<h1>Storm -> Redis</h1>
+<h2>Configure the Kafka Spout</h2>
+<pre class="prettyprint lang-js">
+public static void main(String[] args) throws Exception {
+LOG.info("Starting topology");
+if(args.length < 4) {
+  System.out.println("usage: <kafka brokers> <partitions> <topic> <redis master>");
+  System.exit(1);
+}
+TopologyBuilder builder = new TopologyBuilder();
+builder.setSpout("spout", Kafka.spoutFromArgs(args, "/demo-topology", "v1",args.length > 4 && "true".equals(args[4])));
+</pre>
 </section>
 
 <section class="slide">
-	<h1>Redis -> Node + D3 via SSE</h1>
+<h2>Configuring the Spout</h2>
+<pre class="prettyprint lang-js">
+public static KafkaSpout spoutFromArgs(String[] args,String offsetPath,String consumerId,boolean force) {
+		ArrayList<String> hosts = new ArrayList<String>();
+		for(String s : args[0].split(","))
+			hosts.add(s);
+		int partitions = Integer.parseInt(args[1]);
+		
+		SpoutConfig kafkaConfig = new SpoutConfig(
+				KafkaConfig.StaticHosts.fromHostString(hosts, partitions),
+				args[2],
+				offsetPath,
+				consumerId);
+		if(force)
+			kafkaConfig.forceStartOffsetTime(-1);
+		kafkaConfig.bufferSizeBytes = 1024*1024;
+		kafkaConfig.fetchSizeBytes  = 1024*1024;
+		kafkaConfig.scheme = new StringScheme();
+		
+		return new KafkaSpout(kafkaConfig);
+	}
+</pre>
 </section>
 
 <section class="slide">
-	<h1>D3 w/ Websockets Integration</h1>
+<h2>Attach the Bolts</h2>
+<pre class="prettyprint">
+	public TopologyBuilder configure(TopologyBuilder builder) {
+		builder.setBolt("events", new EventParserBolt())
+			.shuffleGrouping("spout");
+		builder.setBolt("tokenize", new WordTokenBolt().redis(redisUrl))
+			.shuffleGrouping("events","lines");
+		builder.setBolt("speaker", new SpeakerTranscriptBolt().redis(redisUrl))
+			.fieldsGrouping("events", "lines",new Fields("speaker"));
+
+		return builder;
+	}
+</pre>
 </section>
 
 <section class="slide">
-	<h1>iPad App Integration</h1>
+<h2>Word Tokenizing</h2>
+<pre class="prettyprint">
+public void execute(Tuple input) {
+		try {
+			String line = input.getStringByField("line");
+			long   timestamp = input.getLongByField("timestamp");
+			for(String word : line.replaceAll("\\p{Punct}|\\d"," ").toLowerCase().split("\\s+")) {
+				conn.zadd("Word:"+word, timestamp,""+timestamp);
+				synchronized(updated) {
+					updated.add(word);
+				}
+			}
+		} catch(Exception e) {
+			collector.reportError(e);
+		} finally {
+			collector.ack(input);
+		}
+	}
+</pre>
 </section>
 
 <section class="slide">
-	<h1>Closing</h1>
+<h2>Background Word Events</h2>
+<pre class="prettyprint">
+updateTimer = new Timer("Word Tokenizer Updater");
+		updateTimer.schedule(new TimerTask() {
+			
+			@Override
+			public void run() {
+				long time = System.currentTimeMillis()/1000;
+				long segment = (time % 86400)/60;
+				HashSet<String> toUpdate;
+				synchronized(updated) {
+					toUpdate = updated;
+					updated  = new HashSet<String>();
+				}
+				for(String word : toUpdate) {
+					long size = conn.zcard("Word:"+word);
+					conn.hset("WordCount", word, ""+size);
+					conn.hset("WordCount:"+segment, word, ""+size);
+				}
+				conn.publish("WordCount",""+toUpdate.size());
+			}
+		}, 1000, 1000);
+</pre>
 </section>
+
+<section class="slide">
+<h1>Visualizing the Output</h1>
+</section>
+
+<section class="slide">
+<h2>D3 Introduction</h2>
+<ul>
+  <li>Uses selections in a way similar to jQuery:
+  <pre class="prettyprint">$('span.word');</pre>
+  <pre class="prettyprint">d3.select('body').selectAll('span.word');</pre>
+  </li>
+  <li>With the addition of data binding
+  <pre class="prettyprint">
+  var words = ['one','two','three','four','five'];
+  var w     = d3.select('div#test').selectAll('span.word').data(words);
+  </pre>
+  </li>
+  <li>New elements are created using "enter()"
+  <pre class="prettyprint">w.enter().append("span").attr("class","word").text(function(d) { return d; })</pre></li>
+  <li>Deleted elements are removed using "exit()"
+  <pre class="prettyprint">w.exit().remove();</pre></li>
+  <li>Updated elements are simply updated
+  <pre class="prettyprint">w.text(function(d) { return d; });</pre></li>
+</ul>
+</section>
+
+<section class="slide">
+<h2>Creating new Elements</h2>
+<div id="create-new-table" style="width: 700px;height: 350px;margin-left: auto;margin-right: auto;"></div>
+<input type="button" id="start-create" value="Toggle"/>
+</section>
+
+<section class="slide">
+<h2>The Code</h2>
+<pre class="prettyprint">
+$('#start-create').bind('click',function() {
+if(!timeout) {
+var data = [];
+var i    = 0;
+var svg  = d3.select('#create-new-table').append('svg').attr({width: 700,height: 350});
+timeout = setInterval(function() {
+
+data.push({name:i++,x:700*Math.random(),y:350*Math.random(),r:30*Math.random()});
+
+svg.selectAll('circle.event').data(data).enter()
+.append('circle')
+.style({stroke:"#000",fill:"#ccc"})
+.attr({
+r:function(d) { return d.r; },
+cx:function(d) { return d.x; },
+cy:function(d) { return d.y; },
+}).text(function(d) { return d.name;}).transition().attr({opacity:1});
+},500);
+} else clearInterval(timeout);
+
+});
+});
+</pre>
+</section>
+
+<section class="slide">
+<h2>Modify Elements</h2>
+<div id="modify-new-table" style="width: 700px;height: 350px;margin-left: auto;margin-right: auto;"></div>
+<input type="button" id="start-modify" value="Toggle"/>
+</section>
+
+<section class="slide">
+<h2>Modifying Elements</h2>
+<pre class="prettyprint">
+timeout = setInterval(function() {
+for(var i in data) {
+data[i].x = 700*Math.random();
+data[i].y = 350*Math.random();
+data[i].r = 30*Math.random();
+}
+
+svg.selectAll('circle.event').data(data).transition().attr({
+r:function(d) { return d.r; },
+cx:function(d) { return d.x; },
+cy:function(d) { return d.y; },
+});
+},500);
+</pre>
+</section>
+
+<section class="slide">
+<h2>Connecting the Server</h2>
+<pre class="prettyprint">
+var http    = require('http')
+,   connect = require('connect')
+,   kafka   = require('kafka')
+,   pubsub  = require('redis').createClient()
+,   redis   = require('redis').createClient();
+
+var subs = {};
+pubsub.on('message',function(channel,message) {
+    if(subs[channel])
+	subs[channel](message);
+});
+
+function words(req,res) {
+    req.socket.setTimeout(Infinity);
+    res.writeHead(200,{
+	'Content-Type':'text/event-stream',
+	'Cache-Control':'no-cache',
+	'Connection':'keepalive'
+    });
+    res.message = function(msg,event) {
+	if(event)
+	    res.write('event: '+event+'\n');
+	res.write('data: '+msg+'\n\n');
+    }
+    res.json = function(obj,event) {
+	this.message(JSON.stringify(obj),event);
+    };
+    redis.hgetall("WordCount",function(err,data) {
+	if(data != null)
+	    res.json(dict(data));
+	subs['WordCount'] = function(message) {
+	    console.log("update");
+	    redis.hgetall("WordCount",function(err,data) {
+		if(data != null) 
+		    res.json(dict(data));
+	    });
+	};
+	pubsub.subscribe("WordCount");
+    });
+}
+</pre>
+</section>
+
+
+
+<section class="slide">
+<h2>Rendering a Word Cloud</h2>
+<div style="margin-left: auto;margin-right: auto;" id="words"></div>
+</section>
+
+<section class="slide">
+<h2>Rendering the Cloud</h2>
+<pre class="prettyprint">
+(function($) {
+    var words  = d3.select('div#words').append("svg").attr({width: 700,height:300}).append("g").attr({transform:"translate(350,150)"});
+    var layout = d3.layout.cloud()
+	.size([700,300])
+	.rotate(0)
+	.font('Helvetica')
+	.fontSize(function(d) { return d.size; })
+	.on("end",function(data) {
+	    var w = words.selectAll("text.word").data(data,function(d) { return d.text; })
+	    w.enter().append("text").attr("class","word").style({
+		"font-size":function(d) { return d.size+"px"; },
+	    })
+		.attr("transform",function(d) { return "translate("+[d.x,d.y]+")rotate("+d.rotate+")"; })
+		.text(function(d) { return d.text; })
+		.on('click',function(d) {window.location = '/search?q='+d.text;});
+	    w.transition()
+		.style("font-size",function(d) { return d.size+"px"; })
+		.attr("transform",function(d) { return "translate("+[d.x,d.y]+")rotate("+d.rotate+")"; });
+	    w.exit().remove();
+	})
+	.start();
+
+    var stream = new EventSource("/words");
+    stream.addEventListener("message",function(e) {
+	var data = e.data;
+	try{ 
+	    data = d3.entries(JSON.parse(data));
+	    var  max = d3.max(data,function(d) { return d.value; });
+	    console.log(max);
+	    layout.words(data.map(function(d) { return {text:d.key,size:10+45*d.value/max }})).start();
+	} catch(e) { console.log(e); }
+    });    
+})(jQuery);
+</pre>
+</section?
 
 <!-- End slides. -->
 
@@ -108,13 +547,93 @@
 <script src="extensions/goto/deck.goto.js"></script>
 <script src="extensions/status/deck.status.js"></script>
 <script src="extensions/navigation/deck.navigation.js"></script>
-<script src="extensions/scale/deck.scale.js"></script>
-
+<script src="extensions/scale/deck.scale.js"></script> 
+<script src="d3.v3.js"></script>
+<script src="d3.layout.cloud.js"></script>
+<script src="consumer.js"></script>
+<script src="wordcloud.js"></script>
 <!-- Initialize the deck. You can put this in an external file if desired. -->
 <script>
-	$(function() {
-		$.deck('.slide');
-	});
+$(function() {
+$.deck('.slide');
+$('code[data-src]').each(function(i,x) {
+  var $x = $(x);
+  var url = $x.attr('data-src');
+  $.getScript(url);
+});
+prettyPrint();
+
+});
+
+$(function() {
+var timeout;
+
+$('#start-create').bind('click',function() {
+if(!timeout) {
+var data = [];
+var i    = 0;
+var svg  = d3.select('#create-new-table').append('svg').attr({width: 700,height: 350});
+timeout = setInterval(function() {
+
+data.push({name:i++,x:700*Math.random(),y:350*Math.random(),r:30*Math.random()});
+
+svg.selectAll('circle.event').data(data).enter()
+.append('circle')
+.style({stroke:"#000",fill:"#ccc"})
+.attr({
+class:"event",
+r:function(d) { return d.r; },
+cx:function(d) { return d.x; },
+cy:function(d) { return d.y; },
+}).text(function(d) { return d.name;}).transition().attr({opacity:1});
+},500);
+} else clearInterval(timeout);
+
+});
+});
+
+$(function() {
+var timeout;
+$('#start-modify').bind('click',function() {
+var data = [];
+for(var i=0;i<100;i++) {
+data.push({name:i,x:700*Math.random(),y:350*Math.random(),r:30*Math.random()});
+}
+var svg  = d3.select('#modify-new-table').append('svg').attr({width: 700,height: 350});
+
+//Create the events
+svg.selectAll('circle.event').data(data).enter()
+.append('circle')
+.style({stroke:"#000",fill:"#ccc"})
+.attr({
+class:"event",
+r:function(d) { return d.r; },
+cx:function(d) { return d.x; },
+cy:function(d) { return d.y; },
+}).text(function(d) { return d.name;});
+
+if(!timeout)
+timeout = setInterval(function() {
+for(var i in data) {
+data[i].x = 700*Math.random();
+data[i].y = 350*Math.random();
+data[i].r = 30*Math.random();
+}
+
+svg.selectAll('circle.event').data(data).transition().attr({
+r:function(d) { return d.r; },
+cx:function(d) { return d.x; },
+cy:function(d) { return d.y; },
+});
+},500);
+else clearInterval(timeout);
+});
+});
+
+
+
+
 </script>
+
 </body>
 </html>
