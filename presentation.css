@@ -1,0 +1,15 @@
+.left {
+    width: 50%;
+    float: left;
+}
+
+.right {
+    width: 50%;
+    float: right;
+}
+
+rect.timer {
+    fill: #ccc;
+    stroke: #aaa;
+    stroke-width: 1.0;
+}
