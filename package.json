@@ -1,0 +1,11 @@
+{
+ "name": "strata2013",
+ "version": "0.0.1",
+ "author": "Byron Ellis <byron.ellis@gmail.com>",
+ "description": "Code package for Strata 2013 presentation",
+ "dependencies":{
+   "connect":"*",
+   "redis":"*",
+   "kafka":"*"
+ }
+}
